@@ -119,7 +119,8 @@ export class FlowComponent implements OnInit, OnDestroy {
   selectedStoryId: string;
   direction: number;
 
-  stories: Map<string, string> = new Map();
+  stories: Map<string, StoryDefinitionConfiguration> = new Map();
+  statsModeStories: Map<string, string> = new Map();
 
   selectedEdge: NodeTransition;
   selectedNode: StoryNode;
@@ -325,8 +326,23 @@ export class FlowComponent implements OnInit, OnDestroy {
       });
 
       //2 set stories map
-      const stories = new Map<string, string>();
-      nodesMap.forEach(s => stories.set(s.storyDefinitionId, s.displayName()));
+      const stories = new Map<string, StoryDefinitionConfiguration>();
+      const statsModeStories = new Map<string, string>();
+      if (this.statsMode) {
+        nodesMap.forEach(s => statsModeStories.set(s.storyDefinitionId, s.displayName()));
+      } else {
+        nodesMap.forEach(s => {
+          const theStoryId = s.storyDefinitionId;
+          const theStory = this.allStories.find(aStory => aStory.storyId == theStoryId);
+          if (theStory) {
+            console.debug("Found story: " + theStoryId);
+            stories.set(theStoryId, theStory);
+          } else {
+            console.warn("Cannot find story: " + theStoryId);
+          }
+        }
+        );
+      }
 
       let finalNodes: StoryNode[] = [];
       //3 filter state by count
@@ -472,6 +488,7 @@ export class FlowComponent implements OnInit, OnDestroy {
         //9 init vars
         this.maxNodeCount = maxCount;
         this.stories = stories;
+        this.statsModeStories = statsModeStories;
         this.allNodes = finalNodes;
         this.allTransitions = finalTransitions;
         this.graphData = graph;

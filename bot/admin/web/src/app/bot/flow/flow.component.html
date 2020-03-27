@@ -31,10 +31,21 @@
                        (selectionChange)="displayFlow($event)" class="select">
       </tock-select-bot>
       <span class="select">
-        <nb-select [(ngModel)]="selectedStoryId" (selectedChange)="update()"
-                placeholder="Story Focus" status="primary">
+        <nb-select *ngIf="!statsMode" [(selected)]="selectedStoryId" (selectedChange)="update()"
+                   nbTooltip="Story Focus" placeholder="Story Focus" status="primary">
+          <nb-select-label>{{selectedStoryId}}</nb-select-label>
           <nb-option [value]="undefined">All</nb-option>
-          <nb-option *ngFor="let s of stories | keyvalue: valueAscOrder" [value]="s.key">{{s.value}}</nb-option>
+          <nb-option *ngFor="let s of stories | keyvalue" [value]="s.key">
+            <mat-icon *ngIf="s.value.isBuiltIn()" class="story-type" matTooltip="BuiltIn">build</mat-icon>
+            <mat-icon *ngIf="s.value.isSimpleAnswer()" class="story-type" matTooltip="Message">message</mat-icon>
+            <mat-icon *ngIf="s.value.isScriptAnswer()" class="story-type" matTooltip="Script">code</mat-icon>
+            {{s.value.storyId}}
+          </nb-option>
+        </nb-select>
+        <nb-select *ngIf="statsMode" [(ngModel)]="selectedStoryId" (selectedChange)="update()"
+                   placeholder="Story Focus" status="primary">
+          <nb-option [value]="undefined">All</nb-option>
+          <nb-option *ngFor="let s of statsModeStories | keyvalue: valueAscOrder" [value]="s.key">{{s.value}}</nb-option>
         </nb-select>
       </span>
       <span *ngIf="selectedStoryId" class="select">
