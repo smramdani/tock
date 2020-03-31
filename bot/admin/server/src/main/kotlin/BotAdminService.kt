@@ -16,13 +16,8 @@
 
 package ai.tock.bot.admin
 
-import ai.tock.bot.admin.answer.AnswerConfiguration
-import ai.tock.bot.admin.answer.AnswerConfigurationType.builtin
-import ai.tock.bot.admin.answer.AnswerConfigurationType.script
-import ai.tock.bot.admin.answer.BuiltInAnswerConfiguration
-import ai.tock.bot.admin.answer.ScriptAnswerConfiguration
-import ai.tock.bot.admin.answer.ScriptAnswerVersionedConfiguration
-import ai.tock.bot.admin.answer.SimpleAnswerConfiguration
+import ai.tock.bot.admin.answer.*
+import ai.tock.bot.admin.answer.AnswerConfigurationType.*
 import ai.tock.bot.admin.bot.BotApplicationConfiguration
 import ai.tock.bot.admin.bot.BotApplicationConfigurationDAO
 import ai.tock.bot.admin.bot.BotConfiguration
@@ -323,27 +318,30 @@ object BotAdminService {
             stories.forEach {
                 val controller = BotStoryDefinitionConfigurationDumpController(namespace, botId, it, application, locale, user)
                 val storyConf = it.toStoryDefinitionConfiguration(controller)
-                saveStory(namespace, storyConf, botConf, controller)
+                importStory(namespace, storyConf, botConf, controller)
             }
         }
     }
 
-    private fun saveStory(
+    private fun importStory(
         namespace: String,
         story: StoryDefinitionConfiguration,
         botConf: BotApplicationConfiguration,
         controller: BotStoryDefinitionConfigurationDumpController
     ) {
-        storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndIntent(
+
+        storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndTypeAndIntent(
             namespace,
             botConf.botId,
+            story.currentType,
             story.intent.name
         )?.also {
             storyDefinitionDAO.delete(it)
         }
-        storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndStoryId(
+        storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndTypeAndStoryId(
             namespace,
             botConf.botId,
+            story.currentType,
             story.storyId
         )?.also {
             storyDefinitionDAO.delete(it)
@@ -371,8 +369,8 @@ object BotAdminService {
         story.steps.forEach { saveUserSentenceOfStep(controller.application, it, controller.user) }
     }
 
-    fun findStoryByBotIdAndIntent(namespace: String, botId: String, intent: String): BotStoryDefinitionConfiguration? {
-        return storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndIntent(namespace, botId, intent)
+    fun findConfiguredStoryByBotIdAndIntent(namespace: String, botId: String, intent: String): BotStoryDefinitionConfiguration? {
+        return storyDefinitionDAO.getConfiguredStoryDefinitionByNamespaceAndBotIdAndIntent(namespace, botId, intent)
             ?.let {
                 loadStory(namespace, it)
             }
@@ -589,24 +587,50 @@ object BotAdminService {
         user: UserLogin
     ): BotStoryDefinitionConfiguration? {
 
-        val storyDefinition = storyDefinitionDAO.getStoryDefinitionById(story._id)
+        // Configured stories have priority over built-in stories
+
+        // Two stories (built-in or configured) should not have the same _id
+
+        // There should be max one built-in story for given namespace+bot+intent (or namespace+bot+storyId)
+        // It can be replaced if storyId remains the same, fails otherwise
+
+        // There should be max one configured story for given namespace+bot+intent (or namespace+bot+storyId)
+        // It can be update if _id and storyId remain the same, fails otherwise
+
+        val storyWithSameId = storyDefinitionDAO.getStoryDefinitionById(story._id)
+        storyWithSameId?.let {
+            if (it.currentType != story.currentType
+            ) {
+                badRequest("Story ${it.name} (${it.currentType}) already exists with the ID")
+            }
+        }
+
         val botConf = getBotConfigurationsByNamespaceAndBotId(namespace, story.botId).firstOrNull()
         return if (botConf != null) {
 
             val application = front.getApplicationByNamespaceAndName(namespace, botConf.nlpModel)!!
+            val storyWithSameNsBotTypeAndName = storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndTypeAndStoryId(
+                    namespace,
+                    botConf.botId,
+                    story.currentType,
+                    story.storyId
+            )
+            val storyWithSameNsBotTypeAndIntent = storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndTypeAndIntent(
+                    namespace,
+                    botConf.botId,
+                    story.currentType,
+                    story.intent.name
+            )
 
-            storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndIntent(
-                namespace,
-                botConf.botId,
-                story.intent.name
-            ).let {
+            storyWithSameNsBotTypeAndIntent.let {
                 if (it == null || it.currentType == builtin) {
                     if (it?.currentType == builtin) {
+                        // Replace previous builtin story
                         storyDefinitionDAO.delete(it)
                     }
 
                     //intent change
-                    if (storyDefinition?._id != null) {
+                    if (storyWithSameId?._id != null) {
                         createOrGetIntent(
                             namespace,
                             story.intent.name,
@@ -616,35 +640,38 @@ object BotAdminService {
                     }
                 } else {
                     if (story._id != it._id) {
-                        badRequest("Story already exists for the intent ${story.intent.name} : ${it.name}")
+                        badRequest("Story ${it.name} (${it.currentType}) already exists for intent ${story.intent.name}")
                     }
                 }
             }
-            if (storyDefinitionDAO.getStoryDefinitionByNamespaceAndBotIdAndStoryId(
-                    namespace,
-                    botConf.botId,
-                    story.storyId
-                )?._id != storyDefinition?._id
+            if (storyWithSameNsBotTypeAndName?._id != storyWithSameId?._id
             ) {
-                badRequest("Story ${story.storyId} already exists")
+                if (storyWithSameNsBotTypeAndName?.currentType == builtin) {
+                    // Replace previous builtin story
+                    if (storyWithSameNsBotTypeAndIntent != storyWithSameNsBotTypeAndIntent) { // Do not delete the same story twice
+                        storyDefinitionDAO.delete(storyWithSameNsBotTypeAndName)
+                    }
+                } else {
+                    badRequest("Story ${story.name} (${story.currentType}) already exists")
+                }
             }
 
-            val newStory = if (storyDefinition != null) {
-                storyDefinition.copy(
+            val newStory = if (storyWithSameId != null) {
+                storyWithSameId.copy(
                     name = story.name,
                     description = story.description,
                     category = story.category,
                     currentType = story.currentType,
                     intent = story.intent,
-                    answers = story.answers.mapNotNull { it.toStoryConfiguration(botConf.botId, storyDefinition) },
+                    answers = story.answers.mapNotNull { it.toStoryConfiguration(botConf.botId, storyWithSameId) },
                     mandatoryEntities = story.mandatoryEntities.map {
                         it.toEntityConfiguration(
                             application,
                             botConf.botId,
-                            storyDefinition
+                            storyWithSameId
                         )
                     },
-                    steps = story.steps.map { it.toStepConfiguration(application, botConf.botId, storyDefinition) },
+                    steps = story.steps.map { it.toStepConfiguration(application, botConf.botId, storyWithSameId) },
                     userSentence = story.userSentence,
                     userSentenceLocale = story.userSentenceLocale,
                     configurationName = story.configurationName,
@@ -656,17 +683,17 @@ object BotAdminService {
                     story.botId,
                     story.intent,
                     story.currentType,
-                    story.answers.mapNotNull { it.toStoryConfiguration(botConf.botId, storyDefinition) },
+                    story.answers.mapNotNull { it.toStoryConfiguration(botConf.botId, storyWithSameId) },
                     0,
                     namespace,
                     story.mandatoryEntities.map {
                         it.toEntityConfiguration(
                             application,
                             botConf.botId,
-                            storyDefinition
+                            storyWithSameId
                         )
                     },
-                    story.steps.map { it.toStepConfiguration(application, botConf.botId, storyDefinition) },
+                    story.steps.map { it.toStepConfiguration(application, botConf.botId, storyWithSameId) },
                     story.name,
                     story.category,
                     story.description,
