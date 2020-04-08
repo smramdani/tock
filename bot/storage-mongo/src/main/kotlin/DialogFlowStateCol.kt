@@ -16,6 +16,7 @@
 
 package ai.tock.bot.mongo
 
+import ai.tock.bot.admin.answer.AnswerConfigurationType
 import ai.tock.bot.admin.bot.BotApplicationConfiguration
 import ai.tock.bot.definition.DialogFlowStateTransitionType
 import ai.tock.bot.engine.dialog.Dialog
@@ -38,8 +39,10 @@ internal data class DialogFlowStateCol(
     val intent: String,
     val step: String?,
     val entities: Set<String>,
-    val _id: Id<DialogFlowStateCol> = newId()
-)
+    val _id: Id<DialogFlowStateCol> = newId(),
+    val storyType: AnswerConfigurationType? = null,
+    val storyName: String = intent
+    )
 
 @Data(internal = true)
 @JacksonData(internal = true)
@@ -61,6 +64,7 @@ internal data class DialogFlowStateTransitionStatCol(
     val applicationId: Id<BotApplicationConfiguration>,
     val transitionId: Id<DialogFlowStateTransitionCol>,
     val dialogId: Id<Dialog>,
+//    val userId: String?,
     val text: String?,
     val date: Instant = now()
 )
