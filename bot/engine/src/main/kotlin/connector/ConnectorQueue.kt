@@ -25,14 +25,12 @@ class ConnectorQueue(private val executor: Executor) {
      * @params
      */
     fun add(action: Action, delayInMs: Long, send: (action: Action) -> Unit) {
-        val id = action.recipientId.id.intern()
-
         val actionWrapper = ActionWithTimestamp(action, System.currentTimeMillis() + delayInMs)
 
         val queue = messagesByRecipientMap
-            .get(id) { ConcurrentLinkedQueue() }
+            .get(action.recipientId.id) { ConcurrentLinkedQueue() }
             .apply {
-                synchronized(id) {
+                synchronized(this) {
                     peek().also { existingAction ->
                         offer(actionWrapper)
                         if (existingAction != null) {
@@ -42,28 +40,28 @@ class ConnectorQueue(private val executor: Executor) {
                 }
             }
         executor.executeBlocking(Duration.ofMillis(delayInMs)) {
-            sendActionFromConnector(action, queue, send)
+            sendActionFromConnector(actionWrapper, queue, send)
         }
     }
 
     private fun sendActionFromConnector(
-        action: Action,
+        action: ActionWithTimestamp,
         queue: ConcurrentLinkedQueue<ActionWithTimestamp>,
         send: (action: Action) -> Unit
     ) {
         try {
-            send(action)
+            val timeToWait = action.timestamp - System.currentTimeMillis()
+            if (timeToWait > 0) {
+                Thread.sleep(timeToWait)
+            }
+            send(action.action)
         } finally {
-            synchronized(action.recipientId.id.intern()) {
+            synchronized(queue) {
                 //remove the current one
                 queue.poll()
                 queue.peek()
             }?.also { a ->
-                val timeToWait = a.timestamp - System.currentTimeMillis()
-                if (timeToWait > 0) {
-                    Thread.sleep(timeToWait)
-                }
-                sendActionFromConnector(a.action, queue, send)
+                sendActionFromConnector(a, queue, send)
             }
         }
     }
